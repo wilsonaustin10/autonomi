@@ -1,0 +1,2 @@
+- we're using uv pip
+- llm-reader uses selenium under the hood, may be important for efficiency reasons to note down since we're using playwright
