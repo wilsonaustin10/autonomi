@@ -11,10 +11,9 @@ const COMPUTER_USE_MODEL = process.env.OPENAI_COMPUTER_USE_MODEL || 'gpt-4o';
 
 let openai: OpenAI;
 
-export function getOpenAiClient(): OpenAI {
+export async function getOpenAiClient(): Promise<OpenAI> {
     if (!openai) {
         try {
-
             openai = new OpenAI({
                 apiKey: process.env.OPENAI_API_KEY,
                 // Adding a longer timeout to prevent quick timeouts
@@ -29,7 +28,7 @@ export function getOpenAiClient(): OpenAI {
 }
 
 export async function generateChatResponse(userMessage: string, history: Message[]): Promise<ChatResponse> {
-    const client = getOpenAiClient();
+    const client = await getOpenAiClient();
     if (!userMessage || userMessage.trim() === '') {
         return {
             type: ResponseType.Error,
@@ -39,7 +38,7 @@ export async function generateChatResponse(userMessage: string, history: Message
 
     try {
 
-        const response = client.chat.completions.create({
+        const response = await client.chat.completions.create({
             model: DEFAULT_MODEL,
             messages: [
                 {

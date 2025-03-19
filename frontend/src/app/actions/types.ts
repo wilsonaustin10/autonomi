@@ -42,7 +42,7 @@ export type NavigateAction = ActionBase & {
 export type Message = {
     role: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    content: string | Array<{type: string; [key: string]: any}>;
+    content: string
 }
 
 
