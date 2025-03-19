@@ -1,7 +1,7 @@
 .env
 node_modules
 pdfs/
-scratchpad/
+scratchpad
 .venv/
 __pycache__/
 .DS_Store
