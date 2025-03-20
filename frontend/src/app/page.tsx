@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import ChatBox from "./components/ChatBox";
 import { Message } from "./actions/types";
+import InteractiveBrowser from "./components/InteractiveBrowser";
 
 export default function Home() {
   const [status, setStatus] = useState<string>("")
@@ -11,18 +12,15 @@ export default function Home() {
   ])
 
   return (
-    <div>
-      <h1 className="text-4xl text-center leading-loose font-bold">AutonoM3 Agent Building</h1>
-      <div>
-        {/* Browser loaded? */}
-      </div>
-      <div className="grid lg:grid-cols-5 gap-4">
-        <div className="lg:col-span-2 h-96 bg-gray-100 border border-1 p-4">
+    <div className="flex flex-col min-h-screen">
+      <h1 className="text-4xl text-center leading-loose font-bold">AutonoM3 Agent Building</h1>>
+      <div className="flex-1 grid md:grid-cols-5 gap-4 p-4">
+        <div className="md:col-span-2 bg-gray-100 border border-1 p-4">
           <ChatBox initialMessages={initialMessages} />
 
         </div>
-        <div className="lg:col-span-3 h-96 bg-gray-100">
-          Browser
+        <div className="md:col-span-3 bg-gray-100">
+          <InteractiveBrowser/>
         </div>
       </div>
     </div>

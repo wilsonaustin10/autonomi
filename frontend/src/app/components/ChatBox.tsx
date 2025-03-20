@@ -1,11 +1,10 @@
 'use client'
 
 import { useEffect, useRef, useState } from "react"
-import ChatMessage, { type ChatMessageType } from "./ChatMessage"
-import { Input } from "@/components/ui/input"
+import ChatMessage from "./ChatMessage"
 import { Button } from "@/components/ui/button"
-import { generateChatResponse } from "../actions/openai-client"
 import { Message } from "../actions/types"
+import { Textarea } from "@/components/ui/textarea"
 
 type P = {
     initialMessages: Message[];
@@ -118,8 +117,8 @@ export default function ChatBox({ initialMessages }: P) {
                 ))}
             </div>
             <form onSubmit={handleSendMessage} className="border-t p-4 flex gap-2">
-                <Input
-                    type="text"
+                <Textarea
+                    rows={1}
                     value={inputMessage}
                     onChange={(e) => setInputMessage(e.target.value)}
                     placeholder="Type your message here..." />
