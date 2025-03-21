@@ -7,27 +7,54 @@ import { navigateTo, performAction } from '@/app/actions/browser'
 import Image from 'next/image'
 
 export default function InteractiveBrowser() {
-    const [url, setUrl] = useState<string>('https://example.com')
+    const [url, setUrl] = useState<string>('https://google.com')
     const [isLoading, setIsLoading] = useState<boolean>(false)
     const [logs, setLogs] = useState<string[]>([])
-    const [sessionId, setSessionId] = useState<string>('')
+    const [sessionId, setSessionId] = useState<string>(Math.random().toString(36).substring(2, 15))
     const [screenshot, setScreenshot] = useState<string>('')
     const [pageTitle, setPageTitle] = useState<string>('')
-    const [clickableElements, setClickableElements] = useState<any[]>([])
-    const [formElements, setFormElements] = useState<any[]>([])
+    
+    const [formElements, setFormElements] = useState<{
+        tagName: string;
+        id: string;
+        name: string;
+        type: string;
+        value: string;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    }[]>([])
     const browserRef = useRef<HTMLDivElement>(null)
+    const [historyState, setHistoryState] = useState<{
+        canGoBack?: boolean;
+        canGoForward?: boolean;
+    }>({})
+
+    // State variables to handle auto-refresh of site screenshots
+    const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
+    const [refreshInterval, setRefreshInterval] = useState<number>(2000); // 2 seconds
+    const refreshTimerRef = useRef<NodeJS.Timeout | null>(null);
 
 
     // Initialize session and connect to SSE
     useEffect(() => {
-        const newSessionId = Math.random().toString(36).substring(2, 15);
-        setSessionId(newSessionId);
+        // Prevent any browser updates until sessionId is defined
+        if (!sessionId) {
+            return;
+        }
 
-        // Initial navigation
-        handleNavigation(url);
+        const initBrowser = async () => {
+            // Wait a short delay for the session to be properly initialized
+            await new Promise(resolve => setTimeout(resolve, 100))
+            await handleNavigation(url);
+            
+        }
+
+        initBrowser();
 
         // Set up SSE connection
-        const eventSource = new EventSource(`/api/browser-events?sessionId=${newSessionId}`);
+        const eventSource = new EventSource(`/api/browser-events?sessionId=${sessionId}`);
         eventSource.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
@@ -45,9 +72,55 @@ export default function InteractiveBrowser() {
 
         return () => {
             eventSource.close();
+            if (refreshTimerRef.current) {
+                clearInterval(refreshTimerRef.current);
+                refreshTimerRef.current = null;
+            }
         };
-    }, []);
+    }, [sessionId]);
 
+
+    // Add this function to start/stop the auto-refresh
+    const toggleAutoRefresh = (enabled: boolean) => {
+        setAutoRefresh(enabled);
+
+        // Clear existing timer
+        if (refreshTimerRef.current) {
+            clearInterval(refreshTimerRef.current);
+            refreshTimerRef.current = null;
+        }
+
+        // Start new timer if enabled
+        if (enabled && browserRef.current) {
+            refreshTimerRef.current = setInterval(async () => {
+                // Only refresh if not already loading
+                if (!isLoading && browserRef.current) {
+                    await refreshScreenshot();
+                }
+            }, refreshInterval);
+        }
+    };
+
+
+    // Add this function to manually refresh the screenshot
+    const refreshScreenshot = async () => {
+        if (!browserRef.current || isLoading) return;
+
+        setIsLoading(true);
+        try {
+            // Create a simple action that doesn't change the page but returns a fresh screenshot
+            const result = await performAction('refresh', '', undefined, sessionId);
+            if (result.success) {
+                updateBrowserState(result);
+            }
+        } catch (error) {
+            console.error('Error refreshing screenshot:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // Modify 
     const addLog = (message: string) => {
         setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`]);
     };
@@ -59,16 +132,20 @@ export default function InteractiveBrowser() {
             console.log("Navigating to ", targetUrl)
             const result = await navigateTo(targetUrl, sessionId);
             if (result.success) {
-                setScreenshot(result.screenshot);
-                setPageTitle(result.title);
-                setClickableElements(result.clickableElements);
-                setFormElements(result.formElements);
+                updateBrowserState(result);
                 addLog(`Loaded: ${result.url}`);
+
+                // Restart auto-refresh after navigation
+                if (autoRefresh) {
+                    toggleAutoRefresh(false); // Stop current timer
+                    toggleAutoRefresh(true);  // Start new timer
+                }
             } else {
-                addLog(`Error: ${result.error}`);
+                addLog(`Error: ${result.error || 'Unknown error'}`);
             }
         } catch (error) {
-            addLog(`Error: ${error.message}`);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            addLog(`Error: ${errorMessage}`);
         } finally {
             setIsLoading(false);
         }
@@ -78,29 +155,31 @@ export default function InteractiveBrowser() {
         setIsLoading(true);
         try {
             const result = await performAction(action, selector, value, sessionId);
+            console.log("Result", result)
             if (result.success) {
-                setScreenshot(result.screenshot);
-                setPageTitle(result.title);
-                setClickableElements(result.clickableElements);
-                setFormElements(result.formElements);
+                updateBrowserState(result);
                 if (result.extractedText) {
                     addLog(`Extracted: ${result.extractedText}`);
                 } else {
-                    addLog(`Performed ${action} on ${selector}`);
+                    if (action === "mouseClick") {
+                        addLog(`Performed ${action} on x-y coordinates ${value}`)
+                    } else {
+                        addLog(`Performed ${action} ${selector ? 'on ' + selector : ''}`);
+                    }
                 }
             } else {
-                addLog(`Error: ${result.error}`);
+                addLog(`Error: ${result.error || 'Unknown error'}`);
             }
         } catch (error) {
-            addLog(`Error: ${error.message}`);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            addLog(`Error: ${errorMessage}`);
         } finally {
             setIsLoading(false);
         }
     }
 
-    const handleScreenshotClick = (e: React.MouseEvent<HTMLImageElement>) => {
-        console.log(browserRef.current, clickableElements.length === 0)
-        if (!browserRef.current || clickableElements.length === 0) return;
+    const handleScreenshotClick = async (e: React.MouseEvent<HTMLImageElement>) => {
+        if (!browserRef.current) return;
 
         const rect = e.currentTarget.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -109,52 +188,43 @@ export default function InteractiveBrowser() {
         const imageElement = e.currentTarget as HTMLImageElement;
         const scaleX = imageElement.naturalWidth / imageElement.offsetWidth;
         const scaleY = imageElement.naturalHeight / imageElement.offsetHeight;
-        
+
         // Convert to actual coordinates on the screenshot
         const actualX = x * scaleX;
         const actualY = y * scaleY;
 
         console.log(`Click at position: (${actualX}, ${actualY})`);
-        console.log(`Available elements: ${clickableElements.length}`);
-        
-        const clickedElement = clickableElements.find(el => {
-            const isMatch = (
-                (actualX >= el.x && actualX <= el.x + el.width) &&
-                (actualY >= el.y && actualY <= el.y + el.height)
-            )
-            if (isMatch) {
-                console.log(`Match found: ${el.tagName} "${el.text}" with href (${el.href}) at (${el.x}, ${el.y})`);
-            }
-            return isMatch;
-        })
 
-         // Debug output for the first element (to check coordinates)
-        if (clickableElements.length > 0) {
-            const el = clickableElements[0];
-            console.log(`First element: ${el.tagName} "${el.text}" at (${el.x}, ${el.y}) with size ${el.width} x ${el.height}`);
-        }
-    
-        if (clickedElement) {
-            addLog(`Clicked: ${clickedElement.text} (${clickedElement.href})`);
+        await handleAction('mouseClick', '', `${Math.round(actualX)},${Math.round(actualY)}`);
+        // const clickedElement = clickableElements.find(el => {
+        //     const isMatch = (
+        //         (actualX >= el.x && actualX <= el.x + el.width) &&
+        //         (actualY >= el.y && actualY <= el.y + el.height)
+        //     )
+        //     if (isMatch) {
+        //         console.log(`Match found: ${el.tagName} "${el.text}" with href (${el.href}) at (${el.x}, ${el.y})`);
+        //     }
+        //     return isMatch;
+        // })
 
-            if (clickedElement.href) {
-                handleNavigation(clickedElement.href);
-            } else {
+        // if (clickedElement) {
+        //     addLog(`Clicked: ${clickedElement.text} (${clickedElement.href})`);
 
-                let selector;
-                if (clickedElement.id) {
-                    selector = `#${clickedElement.id}`;
-                } else if (clickedElement.text) {
-                    // Use text content for selection - this works in Playwright
-                    selector = `//${clickedElement.tagName}[contains(text(), "${clickedElement.text}")]`;
-                } else {
-                    // Fallback to a position-based selector
-                    selector = `${clickedElement.tagName}:nth-of-type(${clickedElement.index || 1})`;
-                }
+        //     if (clickedElement.href) {
+        //         handleNavigation(clickedElement.href);
+        //     } else {
+        //         setIsLoading(true);
+        //         await handleAction('mouseClick', '', `${clickedElement.x},${clickedElement.y}`);
+        //         setIsLoading(false);
+        //     }
+        // } else {
 
-                handleAction("click", selector)
-            }
-        }
+        //     // If no element was found, use raw coordinates
+        //     console.log(`No element found at position, using raw coordinates`);
+        //     setIsLoading(true);
+        //     await handleAction('mouseClick', '', `${Math.round(actualX)},${Math.round(actualY)}`);
+        //     setIsLoading(false);
+        // }
     }
 
     // Handle messages from iframe
@@ -192,6 +262,24 @@ export default function InteractiveBrowser() {
         handleNavigation(trimmedUrl);
     };
 
+    // Add this function to update browser state from API responses
+    const updateBrowserState = (result: any) => {
+        if (result.screenshot) {
+            setScreenshot(result.screenshot);
+        }
+        if (result.title) {
+            setPageTitle(result.title);
+        }
+        if (result.formElements) {
+            setFormElements(result.formElements || []);
+        }
+        if (result.historyState) {
+            setHistoryState(result.historyState);
+        }
+        if (result.url) {
+            setUrl(result.url)
+        }
+    }
 
     return (
         <div className="flex flex-col h-full border rounded-md overflow-hidden bg-white">
@@ -199,7 +287,7 @@ export default function InteractiveBrowser() {
             <div className="flex items-center gap-2 p-2 border-b bg-gray-100">
                 <Button
                     onClick={() => handleAction('back', '')}
-                    disabled={!sessionId}
+                    disabled={!sessionId || !historyState.canGoBack}
                     size="sm"
                     variant="outline"
                 >
@@ -207,7 +295,7 @@ export default function InteractiveBrowser() {
                 </Button>
                 <Button
                     onClick={() => handleAction('forward', '')}
-                    disabled={!sessionId}
+                    disabled={!sessionId || !historyState.canGoForward}
                     size="sm"
                     variant="outline"
                 >
@@ -221,6 +309,7 @@ export default function InteractiveBrowser() {
                 >
                     ↻
                 </Button>
+
                 <form onSubmit={handleSubmit} className="flex-1 flex gap-2">
                     <Input
                         value={url}
@@ -232,6 +321,41 @@ export default function InteractiveBrowser() {
                         Go
                     </Button>
                 </form>
+                <button
+                    onClick={refreshScreenshot}
+                    className="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300"
+                    title="Refresh screenshot"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 2v6h-6"></path>
+                        <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+                        <path d="M3 22v-6h6"></path>
+                        <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+                    </svg>
+                </button>
+
+                <div className="flex items-center ml-2">
+                    <input
+                        type="checkbox"
+                        id="auto-refresh"
+                        checked={autoRefresh}
+                        onChange={(e) => toggleAutoRefresh(e.target.checked)}
+                        className="mr-1"
+                    />
+                    <label htmlFor="auto-refresh" className="text-sm">Auto</label>
+                </div>
+
+                <select
+                    value={refreshInterval}
+                    onChange={(e) => setRefreshInterval(Number(e.target.value))}
+                    className="ml-2 text-sm bg-gray-200 rounded p-1"
+                    disabled={!autoRefresh}
+                >
+                    <option value={1000}>1s</option>
+                    <option value={2000}>2s</option>
+                    <option value={5000}>5s</option>
+                    <option value={10000}>10s</option>
+                </select>
             </div>
 
             {/* Browser Content */}
@@ -249,7 +373,7 @@ export default function InteractiveBrowser() {
                     <Image
                         src={screenshot}
                         alt="Browser content"
-                        className="w-full cursor-pointer"
+                        className="w-full"
                         onClick={handleScreenshotClick}
                         width={1000}
                         height={1000}

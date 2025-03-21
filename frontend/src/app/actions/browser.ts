@@ -1,13 +1,13 @@
 'use server'
 
-import { chromium } from 'playwright';
+import { chromium, Page } from 'playwright';
 import { BrowserPool } from '@/lib/browser-pool';
+import { DEFAULT_FALLBACK_TIMEOUT, DEFAULT_NETWORK_IDLE_TIMEOUT, defaultLogPrefix } from './constants';
 
 const browserPool = new BrowserPool();
 const SCREENSHOT_QUALITY = 100;
 const SCREENSHOT_TYPE = 'jpeg';
 const IS_SCREENSHOT_FULL_PAGE = true;
-const CLICKABLE_ELEMENTS_SELECTOR = 'a, button, input[type="submit"], [role="button"]';
 
 function formatUrl(input: string): string {
   try {
@@ -31,38 +31,28 @@ export async function navigateTo(url: string, sessionId: string) {
   try {
     const { page } = await browserPool.getBrowser(sessionId);
     const formattedUrl = formatUrl(url)
-    console.log("Navigating to ", formattedUrl)
-    await page.goto(formattedUrl);
+    console.debug(`${sessionId}: Navigating to ${formattedUrl}`)
+    await page.goto(formattedUrl, {
+      waitUntil: "domcontentloaded"
+    });
+    await browserPool.updateBrowserState(sessionId, page);
+
+    await waitForPageStability(page, {
+      logPrefix: `${sessionId}`
+    })
+
     const screenshot = await page.screenshot({
       type: SCREENSHOT_TYPE,
       quality: SCREENSHOT_QUALITY,
       fullPage: IS_SCREENSHOT_FULL_PAGE
     });
-    const content = await page.content();
+    const content = await safeGetPageContent(page, `${sessionId}`)
     const title = await page.title();
 
-    // Extract clickable elements for mapping
-    const clickableElements = await getClickableElements(sessionId);
-
-
     // Extract form elements
-    const formElements = await page.evaluate(() => {
-      const elements = document.querySelectorAll('input:not([type="submit"]), textarea, select');
-      return Array.from(elements).map(el => {
-        const rect = el.getBoundingClientRect();
-        return {
-          tagName: el.tagName.toLowerCase(),
-          id: el.id,
-          name: el.getAttribute('name'),
-          type: el.getAttribute('type') || 'text',
-          placeholder: el.getAttribute('placeholder') || '',
-          x: rect.left,
-          y: rect.top,
-          width: rect.width,
-          height: rect.height
-        };
-      });
-    });
+    const formElements = getFormElements(sessionId);
+
+    const historyState = await getBrowserHistory(page);
 
     return {
       success: true,
@@ -70,8 +60,8 @@ export async function navigateTo(url: string, sessionId: string) {
       content,  // Still send content for potential parsing
       url: page.url(),
       title,
-      clickableElements,
-      formElements
+      formElements,
+      historyState
     };
   } catch (error) {
     console.error('Navigation error:', error);
@@ -86,26 +76,37 @@ export async function performAction(action: string, selector: string, value: str
   try {
     const { page } = await browserPool.getBrowser(sessionId);
 
-        // Extract clickable elements for mapping
-        const clickableElements = await getClickableElements(sessionId)
+    // Extract clickable elements for mapping
 
+    // Extract form elements
+    const formElements = await getFormElements(sessionId);
+    console.debug(`${sessionId}: Performing: ${action}`)
 
-        // Extract form elements
-        const formElements = await getFormElements(sessionId);
     switch (action) {
+      case 'mouseClick':
+        if (value) {
+          const [x, y] = value.split(",").map(Number);
+          console.log(`Attempting mouse click event on x-y coordinates (${x}, ${y})`)
+          if (!isNaN(x) && !isNaN(y)) {
+            await page.mouse.move(x, y)
+            await page.mouse.click(x, y)
+
+            await waitForPageStability(page, { logPrefix: `${sessionId}`});
+          }
+        }
+        break;
       case 'click':
         await page.click(selector);
         // Wait for navigation or network idle
         // Use a more flexible waiting approach with timeout
         // Either wait for navigation or timeout after a reasonable period
-        await Promise.race([
-          page.waitForNavigation({ timeout: 5000 }).catch(() => {}),
-          page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {}),
-          new Promise(resolve => setTimeout(resolve, 2000)) // Fallback timeout
-        ]);
+        await waitForPageStability(page, { logPrefix: `${sessionId}`});
         break;
       case 'fill':
-        if (value) await page.fill(selector, value);
+        if (value) {
+          await page.fill(selector, value);
+          await waitForPageStability(page, { logPrefix: `${sessionId}`});
+        }
         break;
       case 'extract':
         const text = await page.textContent(selector);
@@ -123,18 +124,28 @@ export async function performAction(action: string, selector: string, value: str
           url: page.url(),
           extractedText: text,
           // Re-extract clickable elements
-          clickableElements,
           formElements,
         };
       case 'back':
         await page.goBack();
+
+        await waitForPageStability(page, { logPrefix: `${sessionId}`});
         break;
       case 'forward':
         await page.goForward();
+        await waitForPageStability(page, { logPrefix: `${sessionId}`});
         break;
       case 'reload':
         await page.reload();
+        await waitForPageStability(page, { logPrefix: `${sessionId}`});
         break;
+
+      case 'refresh':
+        // This is just a screenshot refresh without any page action
+        // No need to do anything here, we'll just take a new screenshot below
+        await waitForPageStability(page, { logPrefix: `${sessionId}`});
+        break;
+
     }
 
     // Take a screenshot after the action
@@ -144,14 +155,15 @@ export async function performAction(action: string, selector: string, value: str
       fullPage: IS_SCREENSHOT_FULL_PAGE
     });
 
+    const historyState = await getBrowserHistory(page);
+
     return {
       success: true,
       screenshot: `data:image/jpeg;base64,${screenshot.toString('base64')}`,
       content: await page.content(),
       url: page.url(),
-      // Re-extract clickable elements
-      clickableElements,
       formElements,
+      historyState
     };
   } catch (error) {
     console.error('Action error:', error);
@@ -162,6 +174,7 @@ export async function performAction(action: string, selector: string, value: str
   }
 }
 
+// TODO: Potentially unused
 // SSE endpoint for browser events
 export async function* browserEvents(sessionId: string) {
   try {
@@ -198,29 +211,30 @@ export async function* browserEvents(sessionId: string) {
   } catch (error) {
     yield JSON.stringify({ error: error.message });
   }
-} 
-
-export async function getClickableElements(sessionId: string) {
-  const { page } = await browserPool.getBrowser(sessionId);
-  const clickableElements = await page.evaluate(() => {
-    const elements = document.querySelectorAll('a, button, input[type="submit"], textarea, select, [role="button"]');
-    return Array.from(elements).map((el, index) => {
-      const rect = el.getBoundingClientRect();
-      return {
-        tagName: el.tagName.toLowerCase(),
-        id: el.id,
-        text: el.textContent?.trim() || '',
-        href: el.getAttribute('href') || '',
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height,
-        index: index + 1, // 1-ased index for nth-of-type css selector
-      };
-    });
-  });
-  return clickableElements;
 }
+
+// TODO: Deprecate this
+// export async function getClickableElements(sessionId: string) {
+//   const { page } = await browserPool.getBrowser(sessionId);
+//   const clickableElements = await page.evaluate(() => {
+//     const elements = document.querySelectorAll('a, button, input, textarea, select, [role="button"]');
+//     return Array.from(elements).map((el, index) => {
+//       const rect = el.getBoundingClientRect();
+//       return {
+//         tagName: el.tagName.toLowerCase(),
+//         id: el.id,
+//         text: el.textContent?.trim() || '',
+//         href: el.getAttribute('href') || '',
+//         x: rect.left,
+//         y: rect.top,
+//         width: rect.width,
+//         height: rect.height,
+//         index: index + 1, // 1-ased index for nth-of-type css selector
+//       };
+//     });
+//   });
+//   return clickableElements;
+// }
 
 export async function getFormElements(sessionId: string) {
   const { page } = await browserPool.getBrowser(sessionId);
@@ -241,4 +255,72 @@ export async function getFormElements(sessionId: string) {
       };
     });
   });
+}
+
+async function getBrowserHistory(page: Page) {
+  console.log("GEtting browser history...start")
+  return page.evaluate(() => {
+    // Try to get the current index from history.state if available
+    let currentIndex = 0;
+
+    // Modern browsers often store the index in history.state
+    if (window.history.state && window.history.state.idx !== undefined) {
+      currentIndex = window.history.state.idx;
+    }
+
+    // Calculate if we can go forward or back based on index and length
+    const historyLength = window.history.length;
+    console.log("history state", window.history.state)
+    const canGoBack = currentIndex > 0;
+    const canGoForward = currentIndex < historyLength - 1;
+
+    return {
+      canGoBack,
+      canGoForward,
+      currentIndex,
+      length: historyLength
+    };
+  });
+}
+
+
+
+type PageStabilityOptions = {
+  networkIdleTimeout: number;
+  fallbackTimeout: number;
+  logPrefix: string;
+}
+
+async function waitForPageStability(page: Page, options: PageStabilityOptions) {
+  const defaults: PageStabilityOptions = {
+    networkIdleTimeout: DEFAULT_NETWORK_IDLE_TIMEOUT,
+    fallbackTimeout: DEFAULT_FALLBACK_TIMEOUT,
+    logPrefix: ''
+  }
+  const settings = {
+    ...defaults,
+    ...options
+  }
+
+  try {
+    // Wait for network idle with a timeout
+    await page.waitForLoadState('networkidle', { timeout: settings.networkIdleTimeout });
+  } catch (error) {
+    console.warn(`${settings.logPrefix}: Network didn't reach idle state, continuing anyway`);
+  }
+
+  // Ensure we don't wait indefinitely
+  await new Promise(resolve => setTimeout(resolve, 100));
+
+}
+
+
+// New utility function to safely get page content
+async function safeGetPageContent(page: Page, logPrefix = '') {
+  try {
+    return await page.content();
+  } catch (error) {
+    console.warn(`${logPrefix}: Could not get page content: ${error.message}`);
+    return '';
+  }
 }
