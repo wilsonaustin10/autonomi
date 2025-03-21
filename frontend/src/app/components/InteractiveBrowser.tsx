@@ -67,25 +67,7 @@ export default function InteractiveBrowser() {
 
         initBrowser();
 
-        // Set up SSE connection
-        const eventSource = new EventSource(`/api/browser-events?sessionId=${sessionId}`);
-        eventSource.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                if (data.type === 'click') {
-                    addLog(`Browser event: Click on ${data.target}`);
-                }
-            } catch (error) {
-                console.error('Error parsing event:', error);
-            }
-        };
-
-        eventSource.onerror = () => {
-            addLog('Error in browser event stream');
-        };
-
         return () => {
-            eventSource.close();
             if (refreshTimerRef.current) {
                 clearInterval(refreshTimerRef.current);
                 refreshTimerRef.current = null;
