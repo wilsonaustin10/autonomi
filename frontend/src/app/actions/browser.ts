@@ -91,7 +91,7 @@ export async function performAction(action: string, selector: string, value: str
             await page.mouse.move(x, y)
             await page.mouse.click(x, y)
 
-            await waitForPageStability(page, { logPrefix: `${sessionId}`});
+            await waitForPageStability(page, { logPrefix: `${sessionId}` });
           }
         }
         break;
@@ -100,12 +100,12 @@ export async function performAction(action: string, selector: string, value: str
         // Wait for navigation or network idle
         // Use a more flexible waiting approach with timeout
         // Either wait for navigation or timeout after a reasonable period
-        await waitForPageStability(page, { logPrefix: `${sessionId}`});
+        await waitForPageStability(page, { logPrefix: `${sessionId}` });
         break;
       case 'fill':
         if (value) {
           await page.fill(selector, value);
-          await waitForPageStability(page, { logPrefix: `${sessionId}`});
+          await waitForPageStability(page, { logPrefix: `${sessionId}` });
         }
         break;
       case 'extract':
@@ -129,21 +129,21 @@ export async function performAction(action: string, selector: string, value: str
       case 'back':
         await page.goBack();
 
-        await waitForPageStability(page, { logPrefix: `${sessionId}`});
+        await waitForPageStability(page, { logPrefix: `${sessionId}` });
         break;
       case 'forward':
         await page.goForward();
-        await waitForPageStability(page, { logPrefix: `${sessionId}`});
+        await waitForPageStability(page, { logPrefix: `${sessionId}` });
         break;
       case 'reload':
         await page.reload();
-        await waitForPageStability(page, { logPrefix: `${sessionId}`});
+        await waitForPageStability(page, { logPrefix: `${sessionId}` });
         break;
 
       case 'refresh':
         // This is just a screenshot refresh without any page action
         // No need to do anything here, we'll just take a new screenshot below
-        await waitForPageStability(page, { logPrefix: `${sessionId}`});
+        await waitForPageStability(page, { logPrefix: `${sessionId}` });
         break;
 
     }
@@ -259,28 +259,44 @@ export async function getFormElements(sessionId: string) {
 
 async function getBrowserHistory(page: Page) {
   console.log("GEtting browser history...start")
-  return page.evaluate(() => {
-    // Try to get the current index from history.state if available
-    let currentIndex = 0;
+  if (!page || page.isClosed()) {
+    console.warn("Page is not available for evaluation");
+    return { canGoBack: false, canGoForward: false, currentIndex: 0, length: 0 };
+  }
 
-    // Modern browsers often store the index in history.state
-    if (window.history.state && window.history.state.idx !== undefined) {
-      currentIndex = window.history.state.idx;
-    }
+  try {
 
-    // Calculate if we can go forward or back based on index and length
-    const historyLength = window.history.length;
-    console.log("history state", window.history.state)
-    const canGoBack = currentIndex > 0;
-    const canGoForward = currentIndex < historyLength - 1;
+    page.on('console', msg => {
+      console.log(`BROWSER CONSOLE: ${msg.text()}`)
+    })
+    return await page.evaluate(() => {
+      // Try to get the current index from history.state if available
+      let currentIndex = 0;
 
-    return {
-      canGoBack,
-      canGoForward,
-      currentIndex,
-      length: historyLength
-    };
-  });
+      // Modern browsers often store the index in history.state
+      if (window.history.state && window.history.state.idx !== undefined) {
+        currentIndex = window.history.state.idx;
+      }
+
+      console.log("history state", window.history.state)
+
+      // Calculate if we can go forward or back based on index and length
+      const historyLength = window.history.length;
+      const canGoBack = currentIndex > 0;
+      const canGoForward = currentIndex < historyLength - 1;
+
+      return {
+        canGoBack,
+        canGoForward,
+        currentIndex,
+        length: historyLength
+      };
+    });
+  } catch (error) {
+    console.error(`Failed to evaluate browser history:`, error)
+    return { canGoBack: false, canGoForward: false, currentIndex: 0, length: 0 };
+  }
+
 }
 
 
