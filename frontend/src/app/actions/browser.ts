@@ -50,7 +50,7 @@ export async function navigateTo(url: string, sessionId: string) {
     const title = await page.title();
 
     // Extract form elements
-    const formElements = getFormElements(sessionId);
+    const formElements = await getFormElements(sessionId);
 
     const historyState = await getBrowserHistory(page);
 
@@ -86,7 +86,7 @@ export async function performAction(action: string, selector: string, value: str
       case 'mouseClick':
         if (value) {
           const [x, y] = value.split(",").map(Number);
-          console.log(`Attempting mouse click event on x-y coordinates (${x}, ${y})`)
+          console.debug(`Attempting mouse click event on x-y coordinates (${x}, ${y})`)
           if (!isNaN(x) && !isNaN(y)) {
             await page.mouse.move(x, y)
             await page.mouse.click(x, y)
@@ -105,6 +105,15 @@ export async function performAction(action: string, selector: string, value: str
       case 'fill':
         if (value) {
           await page.fill(selector, value);
+          await waitForPageStability(page, { logPrefix: `${sessionId}` });
+        }
+        break;
+      case 'press':
+        if (value) {
+          if (selector) {
+            await page.focus(selector)
+          }
+          await page.keyboard.press(value)  
           await waitForPageStability(page, { logPrefix: `${sessionId}` });
         }
         break;
@@ -238,8 +247,8 @@ export async function* browserEvents(sessionId: string) {
 
 export async function getFormElements(sessionId: string) {
   const { page } = await browserPool.getBrowser(sessionId);
-  await page.evaluate(() => {
-    const elements = document.querySelectorAll('input:not([type="submit"]), textarea, select');
+  return await page.evaluate(() => {
+    const elements = document.querySelectorAll('input, textarea, select');
     return Array.from(elements).map(el => {
       const rect = el.getBoundingClientRect();
       return {
@@ -257,8 +266,9 @@ export async function getFormElements(sessionId: string) {
   });
 }
 
+// TODO: Re-implement browser history to manually track history state and index even after
 async function getBrowserHistory(page: Page) {
-  console.log("GEtting browser history...start")
+  console.log("Getting browser history...start")
   if (!page || page.isClosed()) {
     console.warn("Page is not available for evaluation");
     return { canGoBack: false, canGoForward: false, currentIndex: 0, length: 0 };
@@ -266,6 +276,7 @@ async function getBrowserHistory(page: Page) {
 
   try {
 
+    // Log all console messages that were made in the page.evaluate function. This is because console.logs don't appear in OUR browser console when wrapped in such functions
     page.on('console', msg => {
       console.log(`BROWSER CONSOLE: ${msg.text()}`)
     })
@@ -273,12 +284,6 @@ async function getBrowserHistory(page: Page) {
       // Try to get the current index from history.state if available
       let currentIndex = 0;
 
-      // Modern browsers often store the index in history.state
-      if (window.history.state && window.history.state.idx !== undefined) {
-        currentIndex = window.history.state.idx;
-      }
-
-      console.log("history state", window.history.state)
 
       // Calculate if we can go forward or back based on index and length
       const historyLength = window.history.length;
@@ -302,9 +307,9 @@ async function getBrowserHistory(page: Page) {
 
 
 type PageStabilityOptions = {
-  networkIdleTimeout: number;
-  fallbackTimeout: number;
-  logPrefix: string;
+  networkIdleTimeout?: number;
+  fallbackTimeout?: number;
+  logPrefix?: string;
 }
 
 async function waitForPageStability(page: Page, options: PageStabilityOptions) {

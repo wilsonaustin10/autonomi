@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { navigateTo, performAction } from '@/app/actions/browser'
 import Image from 'next/image'
+import { useDebounce } from 'use-debounce'
 
 export default function InteractiveBrowser() {
     const [url, setUrl] = useState<string>('https://google.com')
@@ -13,7 +14,8 @@ export default function InteractiveBrowser() {
     const [sessionId, setSessionId] = useState<string>(Math.random().toString(36).substring(2, 15))
     const [screenshot, setScreenshot] = useState<string>('')
     const [pageTitle, setPageTitle] = useState<string>('')
-    
+    const [text, setText] = useState<string>('')
+    const [value] = useDebounce(text, 1000)
     const [formElements, setFormElements] = useState<{
         tagName: string;
         id: string;
@@ -30,6 +32,18 @@ export default function InteractiveBrowser() {
         canGoBack?: boolean;
         canGoForward?: boolean;
     }>({})
+
+    const [focusedFormElement, setFocusedFormElement] = useState<{
+        tagName: string;
+        id: string;
+        name: string;
+        type: string;
+        value: string;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    } | null>(null)
 
     // State variables to handle auto-refresh of site screenshots
     const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
@@ -151,8 +165,8 @@ export default function InteractiveBrowser() {
         }
     }
 
-    const handleAction = async (action: string, selector: string, value?: string) => {
-        setIsLoading(true);
+    const handleAction = useCallback(async (action: string, selector: string, value?: string) => {
+        // setIsLoading(true);
         try {
             const result = await performAction(action, selector, value, sessionId);
             console.log("Result", result)
@@ -174,9 +188,9 @@ export default function InteractiveBrowser() {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             addLog(`Error: ${errorMessage}`);
         } finally {
-            setIsLoading(false);
+            // setIsLoading(false);
         }
-    }
+    }, [sessionId])
 
     const handleScreenshotClick = async (e: React.MouseEvent<HTMLImageElement>) => {
         if (!browserRef.current) return;
@@ -195,17 +209,23 @@ export default function InteractiveBrowser() {
 
         console.log(`Click at position: (${actualX}, ${actualY})`);
 
+        const clickedFormElement = formElements.find(el => {
+            const isMatch = (
+                (actualX >= el.x && actualX <= el.x + el.width) &&
+                (actualY >= el.y && actualY <= el.y + el.height)
+            )
+            if (isMatch) {
+                console.log(`Match found: ${el.tagName} "${el.value}" at (${el.x}, ${el.y})`);
+            }
+            return isMatch;
+        }) || null;
+
+        console.log(clickedFormElement)
+
         await handleAction('mouseClick', '', `${Math.round(actualX)},${Math.round(actualY)}`);
-        // const clickedElement = clickableElements.find(el => {
-        //     const isMatch = (
-        //         (actualX >= el.x && actualX <= el.x + el.width) &&
-        //         (actualY >= el.y && actualY <= el.y + el.height)
-        //     )
-        //     if (isMatch) {
-        //         console.log(`Match found: ${el.tagName} "${el.text}" with href (${el.href}) at (${el.x}, ${el.y})`);
-        //     }
-        //     return isMatch;
-        // })
+
+
+        setFocusedFormElement(clickedFormElement)
 
         // if (clickedElement) {
         //     addLog(`Clicked: ${clickedElement.text} (${clickedElement.href})`);
@@ -248,7 +268,7 @@ export default function InteractiveBrowser() {
     }, [sessionId]);
 
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmitUrl = (e: React.FormEvent) => {
         e.preventDefault();
 
         // Trim the URL and validate
@@ -261,6 +281,21 @@ export default function InteractiveBrowser() {
         // Navigate to the URL
         handleNavigation(trimmedUrl);
     };
+
+    const handleTextChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setText(e.target.value);
+        
+    }
+
+    /**
+     * Attenots to fill user's input into the currently focused form element
+     */
+    useEffect(() => {
+        if (value && focusedFormElement) {
+            console.log(`Filling ${focusedFormElement.id} with value ${value}`)
+            handleAction('fill', `#${focusedFormElement.id}`, value)
+        }
+    }, [value, focusedFormElement, handleAction])
 
     // Add this function to update browser state from API responses
     const updateBrowserState = (result: any) => {
@@ -279,6 +314,12 @@ export default function InteractiveBrowser() {
         if (result.url) {
             setUrl(result.url)
         }
+    }
+    
+    const handleSubmitTextInput = (e: React.FormEvent) => {
+        e.preventDefault();
+        console.log("Focused form element", focusedFormElement)
+        handleAction('press', focusedFormElement ? `#${focusedFormElement.id}` : '', 'Enter')
     }
 
     return (
@@ -310,7 +351,7 @@ export default function InteractiveBrowser() {
                     ↻
                 </Button>
 
-                <form onSubmit={handleSubmit} className="flex-1 flex gap-2">
+                <form onSubmit={handleSubmitUrl} className="flex-1 flex gap-2">
                     <Input
                         value={url}
                         onChange={(e) => setUrl(e.target.value)}
@@ -384,16 +425,22 @@ export default function InteractiveBrowser() {
             {/* Action Panel */}
             <div className="border-t p-2 bg-gray-50">
                 <div className="flex gap-2 mb-2">
-                    <Input
-                        placeholder="CSS Selector (e.g., #submit-button)"
-                        id="selector"
-                        className="flex-1"
-                    />
-                    <Input
-                        placeholder="Value (for inputs)"
-                        id="value"
-                        className="flex-1"
-                    />
+                    <form onSubmit={handleSubmitTextInput} className='flex flex-1 gap-2'>
+                        <Input
+                            placeholder="Value (for inputs)"
+                            onChange={handleTextChange}
+                            disabled={!focusedFormElement}
+                            id="value"
+                            className="flex-1"
+                        />
+                        <Button
+                            type="submit"
+                            className='cursor-pointer'
+                            disabled={!sessionId || !focusedFormElement}
+                        >
+                            Enter
+                        </Button>
+                    </form>
                 </div>
                 <div className="flex gap-2">
                     <Button
