@@ -425,37 +425,6 @@ export default function InteractiveBrowser() {
                     </form>
                 </div>
                 <div className="flex gap-2">
-                    <Button
-                        onClick={() => {
-                            const selector = (document.getElementById('selector') as HTMLInputElement).value
-                            handleAction('click', selector)
-                        }}
-                        disabled={!sessionId}
-                        size="sm"
-                    >
-                        Click
-                    </Button>
-                    <Button
-                        onClick={() => {
-                            const selector = (document.getElementById('selector') as HTMLInputElement).value
-                            const value = (document.getElementById('value') as HTMLInputElement).value
-                            handleAction('fill', selector, value)
-                        }}
-                        disabled={!sessionId}
-                        size="sm"
-                    >
-                        Fill
-                    </Button>
-                    <Button
-                        onClick={() => {
-                            const selector = (document.getElementById('selector') as HTMLInputElement).value
-                            handleAction('extract', selector)
-                        }}
-                        disabled={!sessionId}
-                        size="sm"
-                    >
-                        Extract
-                    </Button>
                 </div>
             </div>
 

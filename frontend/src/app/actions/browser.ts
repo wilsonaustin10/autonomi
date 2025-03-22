@@ -3,29 +3,13 @@
 import { chromium, Page } from 'playwright';
 import { BrowserPool } from '@/lib/browser-pool';
 import { DEFAULT_FALLBACK_TIMEOUT, DEFAULT_NETWORK_IDLE_TIMEOUT, defaultLogPrefix } from './constants';
+import { formatUrl } from '@/lib/utils';
+import { getBrowserHistory } from './browser-history';
 
 const browserPool = new BrowserPool();
 const SCREENSHOT_QUALITY = 100;
 const SCREENSHOT_TYPE = 'jpeg';
 const IS_SCREENSHOT_FULL_PAGE = true;
-
-function formatUrl(input: string): string {
-  try {
-    new URL(input)
-    return input
-  } catch {
-    try {
-      if (input.includes("localhost")) {
-        return `http://${input}`
-      }
-      const urlWithProtocol = `https://${input}`
-      new URL(urlWithProtocol)
-      return urlWithProtocol
-    } catch {
-      throw new Error(`Invalid URL: ${input}`)
-    }
-  }
-}
 
 export async function navigateTo(url: string, sessionId: string) {
   try {
@@ -183,68 +167,6 @@ export async function performAction(action: string, selector: string, value: str
   }
 }
 
-// TODO: Potentially unused
-// SSE endpoint for browser events
-export async function* browserEvents(sessionId: string) {
-  try {
-    const { page } = await browserPool.getBrowser(sessionId);
-
-    // Set up event listeners on the page
-    await page.evaluate(() => {
-      // This code runs in the browser
-      window.addEventListener('click', (e) => {
-        // Report clicks to the server
-        console.log('BROWSER_EVENT', JSON.stringify({
-          type: 'click',
-          target: e.target.outerHTML
-        }));
-      });
-    });
-
-    // Create a stream of console messages
-    const events = [];
-    page.on('console', msg => {
-      if (msg.text().startsWith('BROWSER_EVENT')) {
-        events.push(msg.text().substring(14)); // Remove the BROWSER_EVENT prefix
-      }
-    });
-
-    // Yield events as they come in
-    while (true) {
-      if (events.length > 0) {
-        yield events.shift();
-      } else {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    }
-  } catch (error) {
-    yield JSON.stringify({ error: error.message });
-  }
-}
-
-// TODO: Deprecate this
-// export async function getClickableElements(sessionId: string) {
-//   const { page } = await browserPool.getBrowser(sessionId);
-//   const clickableElements = await page.evaluate(() => {
-//     const elements = document.querySelectorAll('a, button, input, textarea, select, [role="button"]');
-//     return Array.from(elements).map((el, index) => {
-//       const rect = el.getBoundingClientRect();
-//       return {
-//         tagName: el.tagName.toLowerCase(),
-//         id: el.id,
-//         text: el.textContent?.trim() || '',
-//         href: el.getAttribute('href') || '',
-//         x: rect.left,
-//         y: rect.top,
-//         width: rect.width,
-//         height: rect.height,
-//         index: index + 1, // 1-ased index for nth-of-type css selector
-//       };
-//     });
-//   });
-//   return clickableElements;
-// }
-
 export async function getFormElements(sessionId: string) {
   const { page } = await browserPool.getBrowser(sessionId);
   return await page.evaluate(() => {
@@ -265,46 +187,6 @@ export async function getFormElements(sessionId: string) {
     });
   });
 }
-
-// TODO: Re-implement browser history to manually track history state and index even after
-async function getBrowserHistory(page: Page) {
-  console.log("Getting browser history...start")
-  if (!page || page.isClosed()) {
-    console.warn("Page is not available for evaluation");
-    return { canGoBack: false, canGoForward: false, currentIndex: 0, length: 0 };
-  }
-
-  try {
-
-    // Log all console messages that were made in the page.evaluate function. This is because console.logs don't appear in OUR browser console when wrapped in such functions
-    page.on('console', msg => {
-      console.log(`BROWSER CONSOLE: ${msg.text()}`)
-    })
-    return await page.evaluate(() => {
-      // Try to get the current index from history.state if available
-      let currentIndex = 0;
-
-
-      // Calculate if we can go forward or back based on index and length
-      const historyLength = window.history.length;
-      const canGoBack = currentIndex > 0;
-      const canGoForward = currentIndex < historyLength - 1;
-
-      return {
-        canGoBack,
-        canGoForward,
-        currentIndex,
-        length: historyLength
-      };
-    });
-  } catch (error) {
-    console.error(`Failed to evaluate browser history:`, error)
-    return { canGoBack: false, canGoForward: false, currentIndex: 0, length: 0 };
-  }
-
-}
-
-
 
 type PageStabilityOptions = {
   networkIdleTimeout?: number;

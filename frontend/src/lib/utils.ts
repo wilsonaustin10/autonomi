@@ -4,3 +4,20 @@ import { twMerge } from "tailwind-merge"
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
+export function formatUrl(input: string): string {
+  try {
+    new URL(input);
+    return input;
+  } catch {
+    try {
+      if (input.includes("localhost")) {
+        return `http://${input}`;
+      }
+      const urlWithProtocol = `https://${input}`;
+      new URL(urlWithProtocol);
+      return urlWithProtocol;
+    } catch {
+      throw new Error(`Invalid URL: ${input}`);
+    }
+  }
+}
