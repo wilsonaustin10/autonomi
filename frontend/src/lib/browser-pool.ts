@@ -1,12 +1,15 @@
 import { chromium, Browser, Page } from 'playwright-core';
 
 
-export type BrowserType = {
-  browser: Browser;
-  page: Page;
-  lastUsed: number;
-  browserHistoryIndex: number; // Indicates the current index it is on, on its bro
+export let browserPool: BrowserPool;
+
+export async function getBrowserPool() {
+  if (!browserPool) {
+    browserPool = new BrowserPool();
+  }
+  return browserPool;
 }
+
 export class BrowserPool {
   private browsers: Map<string, { browser: Browser, page: Page, lastUsed: number }> = new Map();
   private maxInstances: number;

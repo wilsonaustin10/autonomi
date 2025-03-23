@@ -2,6 +2,12 @@ import { NextRequest } from "next/server";
 import { streamText } from "ai";
 import {openai} from '@ai-sdk/openai'
 
+/**
+ * Handles the chat API request.
+ * @param req - The request object containing the chat messages.
+ * @returns A stream of text responses from the OpenAI model.
+ */
+
 export async function POST(req: NextRequest) {
     try {
         const {messages } = await req.json()

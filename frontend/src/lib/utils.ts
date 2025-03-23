@@ -4,6 +4,12 @@ import { twMerge } from "tailwind-merge"
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
+
+/**
+ * Formats a URL string to ensure it is valid.
+ * @param input - The URL string to format.
+ * @returns The formatted URL string.
+ */
 export function formatUrl(input: string): string {
   try {
     new URL(input);
@@ -21,3 +27,4 @@ export function formatUrl(input: string): string {
     }
   }
 }
+

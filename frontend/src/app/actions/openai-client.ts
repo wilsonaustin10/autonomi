@@ -1,7 +1,7 @@
 'use server'
 
 import OpenAI from "openai"
-import { ChatResponse, Message, ResponseType } from "./types";
+import { ChatResponse, Message, ResponseType } from "../../types/messages";
 
 
 // Default model to use

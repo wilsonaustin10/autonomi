@@ -1,0 +1,3 @@
+- [ ] Save the sessionId even after refreshing
+- [ ] Fix navigation history on the interactive browser
+- [ ] 

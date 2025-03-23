@@ -11,9 +11,11 @@
   "dependencies": {
     "@ai-sdk/openai": "^1.2.5",
     "@radix-ui/react-slot": "^1.1.2",
+    "@types/jsdom": "^21.1.7",
     "ai": "^4.1.62",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "jsdom": "^26.0.0",
     "lucide-react": "^0.483.0",
     "next": "15.2.3",
     "openai": "^4.87.3",

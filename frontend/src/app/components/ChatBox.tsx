@@ -3,14 +3,17 @@
 import { useEffect, useRef, useState } from "react"
 import ChatMessage from "./ChatMessage"
 import { Button } from "@/components/ui/button"
-import { Message } from "../actions/types"
+import { Message } from "../../types/messages"
 import { Textarea } from "@/components/ui/textarea"
+import { processStream } from "@/lib/llm-text"
 
 type P = {
     initialMessages: Message[];
+    sessionId: string;
+    updateBrowserState: (result: any) => void;
 }
 
-export default function ChatBox({ initialMessages }: P) {
+export default function ChatBox({ initialMessages, sessionId, updateBrowserState }: P) {
     const [messages, setMessages] = useState<Message[]>(initialMessages)
     const [inputMessage, setInputMessage] = useState<string>("")
     const [isLoading, setIsLoading] = useState<boolean>(false)
@@ -21,7 +24,7 @@ export default function ChatBox({ initialMessages }: P) {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
     }, [messages])
 
-    const handleSendMessage = async (e: React.FormEvent<HTMLFormElement>) => {
+    const handleSendMessage = async (e: React.FormEvent<HTMLButtonElement>) => {
         e.preventDefault()
         if (!inputMessage.trim() || isLoading) return;
         setMessages(prevMessages => [...prevMessages, { content: inputMessage, role: "user" }])
@@ -37,74 +40,56 @@ export default function ChatBox({ initialMessages }: P) {
                 headers: {
                     "Content-Type": "application/json"
                 },
-                body: JSON.stringify({ messages: [...messages, { content: inputMessage, role: "user" }] })
+                body: JSON.stringify(
+                    {
+                        messages,
+                        inputMessage,
+                        sessionId
+                    }
+                )
             })
             if (!response.ok) {
                 console.error("Failed to generate chat response")
                 return;
             }
 
-            const processStream = async () => {
-
-                const reader = response.body?.getReader();
-                if (!reader) {
-                    console.error("No reader found")
-                    return;
-                }
-
-                const decoder = new TextDecoder();
-                let done = false
-                let lastContent = ""
-                try {
-                    while (!done) {
-                        const { value, done: doneReading } = await reader.read();
-                        done = doneReading;
-                        if (value) {
-                            const chunk = decoder.decode(value, { stream: true });
-
-                            // The format appears to be 0:"text" without quotes around the key
-                            const regex = /0:"([^"]*)"/g;
-                            let match: RegExpExecArray | null;
-
-                            const tokensFromChunk: string[] = [];
-                            while ((match = regex.exec(chunk)) !== null) {
-                                tokensFromChunk.push(match[1]);
-                            }
-                            if (tokensFromChunk.length > 0) {
-                                const newContent = tokensFromChunk.join("");
-                                currentResponseRef.current += newContent
-
-                                const latestContent = currentResponseRef.current;
-                                if (latestContent !== lastContent) {
-                                    lastContent = latestContent;
-                                    setMessages(prevMessages => {
-                                        const updatedMessages = [...prevMessages];
-                                        const lastIndex = updatedMessages.length - 1;
-
-                                        // Only update if the last message is from the assistant
-                                        if (lastIndex >= 0 && updatedMessages[lastIndex].role === 'assistant') {
-                                            updatedMessages[lastIndex] = {
-                                                ...updatedMessages[lastIndex],
-                                                content: latestContent
-                                            };
-                                        }
-
-                                        return updatedMessages;
-                                    });
-                                }
-                            }
-                        }
-                    }
-                } finally {
-                    reader.releaseLock();
-                }
-                
-            }
-            
-            await processStream()
-            console.log(messages)
+            await processStream(response, currentResponseRef, setMessages)
         } catch (error) {
             console.error("Error generating chat response:", error)
+        } finally {
+            setIsLoading(false)
+        }
+    }
+
+    const handleComputerUse = async (e: React.FormEvent<HTMLButtonElement>) => {
+        e.preventDefault()
+        if (!inputMessage.trim() || isLoading) return;
+        setMessages(prevMessages => [...prevMessages, { content: inputMessage, role: "user" }])
+        setInputMessage("")
+        setIsLoading(true);
+
+        currentResponseRef.current = "";
+        try {
+            setMessages(prevMessages => [...prevMessages, { content: "", role: "assistant" }])
+            const response = await fetch("/api/computer-use", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(
+                    { 
+                        messages,
+                        userMessage: inputMessage,
+                        sessionId
+                    }
+                )
+            })
+            const data = await response.json();
+            console.log(data);
+
+            updateBrowserState(data.pageInfo);
+        } catch (error) {
+            console.error("Error generating computer use response:", error)
         } finally {
             setIsLoading(false)
         }
@@ -116,14 +101,16 @@ export default function ChatBox({ initialMessages }: P) {
                     <ChatMessage key={index} {...message} />
                 ))}
             </div>
-            <form onSubmit={handleSendMessage} className="border-t p-4 flex gap-2">
+            {/* <form onSubmit={handleSendMessage} className="border-t p-4 flex gap-2">
+            </form> */}
                 <Textarea
                     rows={1}
                     value={inputMessage}
+                    className="cursor-pointer"
                     onChange={(e) => setInputMessage(e.target.value)}
                     placeholder="Type your message here..." />
-                <Button type="submit">Send</Button>
-            </form>
+                <Button type="submit" onClick={handleSendMessage}>Send</Button>
+                <Button type="submit" onClick={handleComputerUse}>computerUse</Button>
         </div>
     )
 }

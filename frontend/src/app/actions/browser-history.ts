@@ -1,8 +1,9 @@
 'use server';
+import { BrowserHistoryState } from '@/types/common';
 import { Page } from 'playwright-core';
 
 // TODO: Re-implement browser history to manually track history state and index even after
-export async function getBrowserHistory(page: Page) {
+export async function getBrowserHistory(page: Page): Promise<BrowserHistoryState> {
   console.log("Getting browser history...start");
   if (!page || page.isClosed()) {
     console.warn("Page is not available for evaluation");

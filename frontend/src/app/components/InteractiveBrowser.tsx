@@ -7,16 +7,12 @@ import { navigateTo, performAction } from '@/app/actions/browser'
 import Image from 'next/image'
 import { useDebounce } from 'use-debounce'
 
-export default function InteractiveBrowser() {
-    const [url, setUrl] = useState<string>('https://google.com')
-    const [isLoading, setIsLoading] = useState<boolean>(false)
-    const [logs, setLogs] = useState<string[]>([])
-    const [sessionId, setSessionId] = useState<string>(Math.random().toString(36).substring(2, 15))
-    const [screenshot, setScreenshot] = useState<string>('')
-    const [pageTitle, setPageTitle] = useState<string>('')
-    const [text, setText] = useState<string>('')
-    const [value] = useDebounce(text, 1000)
-    const [formElements, setFormElements] = useState<{
+export type P = {
+    sessionId: string;
+    url: string;
+    screenshot: string;
+    pageTitle: string;
+    formElements: {
         tagName: string;
         id: string;
         name: string;
@@ -26,13 +22,23 @@ export default function InteractiveBrowser() {
         y: number;
         width: number;
         height: number;
-    }[]>([])
-    const browserRef = useRef<HTMLDivElement>(null)
-    const [historyState, setHistoryState] = useState<{
+    }[]
+    historyState: {
         canGoBack?: boolean;
         canGoForward?: boolean;
-    }>({})
+    }
+    setUrl: (url: string) => void;
+    updateBrowserState: (result: any) => void
+}
 
+export default function InteractiveBrowser({ sessionId, url, screenshot, formElements, historyState, setUrl, updateBrowserState }: P) {
+    
+    const [isLoading, setIsLoading] = useState<boolean>(false)
+    const [logs, setLogs] = useState<string[]>([])
+    
+    const [text, setText] = useState<string>('')
+    const [value] = useDebounce(text, 1000)
+    const browserRef = useRef<HTMLDivElement>(null)
     const [focusedFormElement, setFocusedFormElement] = useState<{
         tagName: string;
         id: string;
@@ -279,24 +285,6 @@ export default function InteractiveBrowser() {
         }
     }, [value, focusedFormElement, handleAction])
 
-    // Add this function to update browser state from API responses
-    const updateBrowserState = (result: any) => {
-        if (result.screenshot) {
-            setScreenshot(result.screenshot);
-        }
-        if (result.title) {
-            setPageTitle(result.title);
-        }
-        if (result.formElements) {
-            setFormElements(result.formElements || []);
-        }
-        if (result.historyState) {
-            setHistoryState(result.historyState);
-        }
-        if (result.url) {
-            setUrl(result.url)
-        }
-    }
     
     const handleSubmitTextInput = (e: React.FormEvent) => {
         e.preventDefault();
