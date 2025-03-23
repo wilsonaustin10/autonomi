@@ -76,8 +76,6 @@ export async function executeTaskLoop(model: string, userMessage: string, sessio
 
             currentIteration++;
             const { screenshot, ...pageInfo } = await getPageInfo(sessionId)
-            console.log("pageInfo: ", pageInfo)
-            console.log("message history: ", messageHistory.length)
 
             const response = await openaiClient.chat.completions.create({
                 model: model,
