@@ -8,6 +8,17 @@ import { JSDOM } from 'jsdom';
  * @returns {Promise<{clickableElements: any[], formElements: any[], visibleText: string}>}
  */
 export async function extractInteractiveElements(pageSource: string) {
+    console.log("Extracting interactive elements from HTML content...");
+    
+    if (!pageSource || pageSource.trim() === '') {
+        console.warn("Empty HTML content provided for extraction");
+        return {
+            clickableElements: [],
+            formElements: [],
+            visibleText: ''
+        };
+    }
+    
     try {
         const { window } = new JSDOM(pageSource);
         const { document } = window;
@@ -114,21 +125,21 @@ export async function extractInteractiveElements(pageSource: string) {
         
         // Also extract a concise representation of the page's main content
         const mainContent = document.querySelector('main') || document.querySelector('body');
-        const visibleTextNodes = [];
+        const visibleTextNodes: string[] = [];
         
         if (mainContent) {
             // Recursively extract text from visible elements
-            const extractTextFromNode = (node) => {
+            const extractTextFromNode = (node: Node) => {
                 if (node.nodeType === 3) { // Text node
                     const text = node.textContent?.trim();
                     if (text) visibleTextNodes.push(text);
                 } else if (node.nodeType === 1) { // Element node
-                    const style = window.getComputedStyle(node);
+                    const style = window.getComputedStyle(node as Element);
                     const isVisible = style.display !== 'none' && style.visibility !== 'hidden';
                     
                     if (isVisible) {
-                        if (node.tagName.toLowerCase() === 'img' && node.alt) {
-                            visibleTextNodes.push(`[Image: ${node.alt}]`);
+                        if ((node as Element).tagName.toLowerCase() === 'img' && (node as HTMLImageElement).alt) {
+                            visibleTextNodes.push(`[Image: ${(node as HTMLImageElement).alt}]`);
                         } else {
                             Array.from(node.childNodes).forEach(extractTextFromNode);
                         }

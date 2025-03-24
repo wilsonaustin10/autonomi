@@ -7,6 +7,8 @@ import { Message } from "@/types/messages";
 import { navigateTo, performAction } from "@/app/actions/browser";
 import { BrowserActions } from "./actions";
 
+// Track if this is a new session or continuing from previous state
+const initializedSessions = new Set<string>();
 
 /**
  * 
@@ -42,7 +44,7 @@ export async function getPageInfo(sessionId: string, getAllData?: boolean) {
         title,
         screenshot: screenshotBase64,
         clickableElements: [], // TODO: Revert back once token limit it resolved
-        formElements: [],
+        formElements,
         content: shortenedHtml
     }
     return pageInfo;
@@ -54,6 +56,9 @@ export async function getPageInfo(sessionId: string, getAllData?: boolean) {
 export async function executeTaskLoop(model: string, userMessage: string, sessionId: string) {
     const allResponses: Message[] = []
     try {
+        // Mark this session as initialized to prevent resetting URL
+        initializedSessions.add(sessionId);
+        
         const openaiClient = new OpenAI({
             apiKey: process.env.OPENAI_API_KEY,
         })
@@ -72,8 +77,21 @@ export async function executeTaskLoop(model: string, userMessage: string, sessio
                 "content": `User message: ${userMessage}`
             },
         ]
+        
+        // Get current browser state before proceeding
+        const browserPool = await getBrowserPool();
+        const { page } = await browserPool.getBrowser(sessionId);
+        const currentUrl = await page.url();
+        
+        // If we're already on a page (not empty), add context about current state
+        if (currentUrl && currentUrl !== 'about:blank') {
+            messageHistory.push({
+                "role": "system",
+                "content": `The browser is currently at URL: ${currentUrl}. Continue from this state.`
+            });
+        }
+        
         while (!done && currentIteration < maxIterations) {
-
             currentIteration++;
             const { screenshot, ...pageInfo } = await getPageInfo(sessionId)
 
@@ -113,11 +131,6 @@ export async function executeTaskLoop(model: string, userMessage: string, sessio
             if (responseMessage.function_call) {
                 const result = await executeFunction(responseMessage.function_call, sessionId);
                 console.debug(`Function ${responseMessage.function_call.name} success: ${result ? result.success : 'Result is null'}`);
-
-                // messageHistory.push({
-                //     role: "assistant",
-                //     content: `Executed function ${responseMessage.function_call.name} with result: ${result ? result.success : 'Result is null'}`,
-                // })
             } else {
                 try {
                     if (responseMessage.content) {

@@ -71,6 +71,12 @@ export default function ChatBox({ initialMessages, sessionId, updateBrowserState
         currentResponseRef.current = "";
         try {
             setMessages(prevMessages => [...prevMessages, { content: "", role: "assistant" }])
+            
+            // Get the current browser URL to include with the request
+            // This helps maintain state between agent tasks
+            const currentBrowserUrl = typeof window !== 'undefined' ? 
+                window.localStorage.getItem('lastBrowserUrl') : null;
+            
             const response = await fetch("/api/computer-use", {
                 method: "POST",
                 headers: {
@@ -80,14 +86,18 @@ export default function ChatBox({ initialMessages, sessionId, updateBrowserState
                     { 
                         messages,
                         userMessage: inputMessage,
-                        sessionId
+                        sessionId,
+                        currentBrowserUrl // Send current URL to maintain state
                     }
                 )
             })
             const data = await response.json();
             console.log(data);
 
-            updateBrowserState(data.pageInfo);
+            // Only update browser state if there was an actual change
+            if (data.pageInfo && Object.keys(data.pageInfo).length > 0) {
+                updateBrowserState(data.pageInfo);
+            }
         } catch (error) {
             console.error("Error generating computer use response:", error)
         } finally {

@@ -1,0 +1,1164 @@
+# AutonoM3 Agent Builder - Project Analysis
+
+## Project Overview
+
+AutonoM3 Agent Builder is an advanced web automation platform that combines the power of Playwright for browser automation with OpenAI's language models to create, manage, and execute web automation scripts through natural language instructions. The system provides an interactive environment where users can describe tasks in plain English, and the AI generates executable Playwright scripts that automate browser interactions.
+
+## Project Purpose
+
+The primary goal of AutonoM3 is to democratize web automation by eliminating the technical barriers traditionally associated with writing automation scripts. By leveraging natural language processing and a visual execution environment, the system enables:
+
+1. Non-technical users to create complex web automation workflows
+2. Technical users to rapidly prototype and test automation scripts
+3. Organizations to standardize and share automation assets
+4. Human-in-the-loop automation where complete automation isn't possible
+
+## System Architecture
+
+The project follows a client-server architecture with several key components:
+
+```
+AutonoM3/
+├── playwright-ui/           # Main application directory
+│   ├── public/              # Frontend assets and UI
+│   ├── src/                 # Backend components
+│   │   ├── agent-generator/ # Script generation components
+│   │   ├── agent-storage/   # Script persistence layer
+│   │   └── computer-use/    # Browser control components
+│   ├── server.js            # Express server and API endpoints
+│   └── openai-client.js     # OpenAI API integration
+└── launch-agent-builder.sh  # Deployment script
+```
+
+## Environment Variables
+
+The system requires several environment variables for proper configuration:
+
+```bash
+# Required configuration
+OPENAI_API_KEY=sk-xxx                  # OpenAI API key
+OPENAI_MODEL=gpt-3.5-turbo             # Default model for chat
+OPENAI_SCRIPT_MODEL=gpt-4              # Model for script generation (more capable)
+PORT=3000                              # Server port
+ENABLE_WEB_SEARCH=true                 # Enable web search capability
+
+# Optional configuration
+DEBUG=true                             # Enable verbose logging
+SAVE_CONVERSATIONS=true                # Save conversation history
+MAX_SCRIPT_LENGTH=10000                # Maximum script length in characters
+TIMEOUT_MS=30000                       # Default timeout for browser operations
+HUMAN_HANDOFF_ENABLED=true             # Enable human handoff mode
+```
+
+## Key Components
+
+### 1. Natural Language Processing Pipeline
+
+The system contains a sophisticated NLP pipeline that:
+- Analyzes user input to distinguish between general questions and automation requests
+- Extracts key information such as target websites, actions, and data requirements
+- Crafts specialized prompts to the OpenAI API to generate robust Playwright scripts
+- Parses and validates the generated code before execution
+
+Key files:
+- `playwright-ui/src/agent-generator/task-detector.js` - Analyzes user messages for automation intent
+- `playwright-ui/src/agent-generator/prompt-templates.js` - Contains specialized prompts for different task types
+- `playwright-ui/src/agent-generator/script-generator.js` - Orchestrates the script generation process
+
+Example task detection code:
+```javascript
+function isAutomationTask(message) {
+  // Check for automation keywords
+  const taskScore = TASK_KEYWORDS.reduce((count, keyword) => 
+    message.toLowerCase().includes(keyword) ? count + 1 : count, 0);
+  
+  // Check for strong indicators
+  const hasStrongIndicator = STRONG_INDICATORS.some(indicator => 
+    message.toLowerCase().includes(indicator));
+  
+  // Determine if this is likely an automation task
+  return taskScore >= 2 || hasStrongIndicator;
+}
+```
+
+### 2. Embedded Browser Environment
+
+The system provides a fully interactive embedded browser that:
+- Renders in real-time within the web interface
+- Executes Playwright scripts with visual feedback
+- Allows for manual interaction during script execution
+- Captures screenshots and logs detailed execution information
+
+Key files:
+- `playwright-ui/public/browser.html` - Frame containing the controlled browser
+- `playwright-ui/server.js` - Browser initialization and control
+- `playwright-ui/src/computer-use/action-executor.js` - Executes actions in the browser
+
+Example browser initialization code:
+```javascript
+async function ensureBrowserInitialized() {
+  if (!activeBrowser || !activePage) {
+    console.log('Initializing browser...');
+    try {
+      // CRITICAL: This configuration must be maintained
+      activeBrowser = await playwright.chromium.launch({
+        headless: true, // Must be boolean true, not string 'new'
+        args: [
+          '--disable-web-security',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-site-isolation-trials',
+          '--disable-features=BlockInsecurePrivateNetworkRequests',
+          '--disable-blink-features=AutomationControlled',
+          '--no-sandbox',
+          '--window-size=1280,800'
+        ]
+      });
+      
+      activeBrowserContext = await activeBrowser.newContext({
+        viewport: { width: 1280, height: 800 },
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      });
+      
+      activePage = await activeBrowserContext.newPage();
+      console.log('Browser initialized successfully');
+      return true;
+    } catch (error) {
+      console.error('Failed to initialize browser:', error);
+      throw error;
+    }
+  }
+  return true;
+}
+```
+
+### 3. Script Management System
+
+The application includes a comprehensive script management system that:
+- Stores generated scripts persistently
+- Organizes scripts by task, date, and user
+- Allows for script versioning and iteration
+- Provides reusable script components and patterns
+
+Key files:
+- `playwright-ui/src/agent-storage/script-repository.js` - Script storage and retrieval
+- `playwright-ui/src/agent-storage/script-versioning.js` - Version control for scripts
+
+Example implementation of script storage:
+```javascript
+const fs = require('fs');
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+
+/**
+ * File-based script repository implementation
+ */
+class FileScriptRepository {
+  constructor(storageDir = './data/scripts') {
+    this.storageDir = storageDir;
+    // Ensure storage directory exists
+    if (!fs.existsSync(storageDir)) {
+      fs.mkdirSync(storageDir, { recursive: true });
+    }
+  }
+  
+  /**
+   * Save a script to the repository
+   * @param {object} scriptData - Script data object
+   * @param {string} [scriptId] - Optional ID (generates UUID if not provided)
+   * @returns {Promise<string>} - The script ID
+   */
+  async saveScript(scriptData, scriptId = null) {
+    // Generate an ID if one wasn't provided
+    const id = scriptId || `script_${uuidv4()}`;
+    
+    // Add metadata if not present
+    if (!scriptData.metadata) {
+      scriptData.metadata = {
+        createdAt: new Date().toISOString(),
+        version: 1
+      };
+    }
+    
+    const filePath = path.join(this.storageDir, `${id}.json`);
+    await fs.promises.writeFile(
+      filePath, 
+      JSON.stringify(scriptData, null, 2)
+    );
+    
+    return id;
+  }
+  
+  /**
+   * Retrieve a script from the repository
+   * @param {string} scriptId - Script ID
+   * @returns {Promise<object|null>} - Script data or null if not found
+   */
+  async getScript(scriptId) {
+    const filePath = path.join(this.storageDir, `${scriptId}.json`);
+    if (!fs.existsSync(filePath)) return null;
+    
+    const data = await fs.promises.readFile(filePath, 'utf-8');
+    return JSON.parse(data);
+  }
+  
+  /**
+   * List all available scripts
+   * @returns {Promise<Array>} - Array of script metadata
+   */
+  async listScripts() {
+    const files = await fs.promises.readdir(this.storageDir);
+    const scriptFiles = files.filter(file => file.endsWith('.json'));
+    
+    const scripts = [];
+    for (const file of scriptFiles) {
+      try {
+        const data = await fs.promises.readFile(
+          path.join(this.storageDir, file), 
+          'utf-8'
+        );
+        const scriptData = JSON.parse(data);
+        scripts.push({
+          id: file.replace('.json', ''),
+          title: scriptData.title || 'Untitled Script',
+          description: scriptData.description || '',
+          metadata: scriptData.metadata || {}
+        });
+      } catch (error) {
+        console.error(`Error reading script file ${file}:`, error);
+      }
+    }
+    
+    return scripts;
+  }
+}
+
+module.exports = FileScriptRepository;
+```
+
+### 4. Human-in-the-Loop Capability
+
+A distinctive feature is the human-in-the-loop functionality that:
+- Detects when automation tasks require human intervention
+- Pauses script execution and prompts for manual actions
+- Continues execution after human interaction
+- Learns from human interventions for future improvements
+
+Example code for human handoff mode:
+```javascript
+async function enterHumanHandoffMode(socket, message = "Please complete this action manually, then click 'Continue'") {
+  try {
+    // Set human handoff mode flag
+    inHumanHandoffMode = true;
+    
+    // Get screenshot for reference
+    const screenshot = await activePage.screenshot();
+    const screenshotBase64 = screenshot.toString('base64');
+    
+    // Send notification to the client
+    socket.emit('human-handoff', {
+      active: true,
+      message,
+      screenshot: `data:image/png;base64,${screenshotBase64}`
+    });
+    
+    console.log('Entered human handoff mode');
+    
+    // Wait for human to signal they've completed the action
+    return new Promise((resolve) => {
+      humanHandoffResolve = resolve;
+    });
+  } catch (error) {
+    console.error('Error entering human handoff mode:', error);
+    return false;
+  }
+}
+```
+
+### 5. Web Interface and User Experience
+
+The system has a modern, intuitive web interface that:
+- Provides a code editor with syntax highlighting
+- Displays step-by-step execution of scripts
+- Shows real-time browser output
+- Includes a chat interface for interactions with the AI assistant
+- Implements intelligent focus management for a seamless user experience
+
+Key files:
+- `playwright-ui/public/index.html` - Main UI
+- `playwright-ui/public/js/main.js` - Frontend functionality
+- `playwright-ui/public/css/styles.css` - UI styling
+
+#### Focus Management System
+
+The platform implements a sophisticated focus management system that enhances user experience by:
+- Automatically focusing on the chat input after operations complete
+- Maintaining context-appropriate focus during script execution
+- Implementing keyboard shortcuts for common operations
+- Providing focus indicators for accessibility compliance
+
+Example focus management code:
+```javascript
+// Focus management implementation
+function manageFocus(context) {
+  // Clear any existing focus
+  if (document.activeElement) {
+    document.activeElement.blur();
+  }
+  
+  switch (context) {
+    case 'chat':
+      // Focus on chat input when returning to chat context
+      chatInput.focus();
+      break;
+    
+    case 'script-editor':
+      // Focus on code editor when in editing mode
+      codeEditor.focus();
+      break;
+      
+    case 'execution':
+      // Focus on control panel during execution
+      runControlPanel.focus();
+      break;
+      
+    case 'human-handoff':
+      // Focus on continue button during human handoff
+      continueButton.focus();
+      break;
+  }
+  
+  // Log focus change for debugging
+  console.log(`Focus changed to: ${context}`);
+}
+
+// Set up focus management event listeners
+document.addEventListener('keydown', (event) => {
+  // Alt+C to focus chat
+  if (event.altKey && event.key === 'c') {
+    event.preventDefault();
+    manageFocus('chat');
+  }
+  
+  // Alt+E to focus editor
+  if (event.altKey && event.key === 'e') {
+    event.preventDefault();
+    manageFocus('script-editor');
+  }
+  
+  // Alt+R to focus run controls
+  if (event.altKey && event.key === 'r') {
+    event.preventDefault();
+    manageFocus('execution');
+  }
+});
+
+// Ensure chat input is focused after operations complete
+function completeOperation() {
+  // Reset UI state
+  statusElement.textContent = '';
+  chatInput.disabled = false;
+  sendButton.disabled = false;
+  
+  // Return focus to chat input for seamless conversation flow
+  manageFocus('chat');
+}
+```
+
+Example frontend JavaScript implementation:
+```javascript
+// Frontend code for handling automation tasks
+async function runAutomationTask(taskDescription) {
+  try {
+    // Update UI to show processing state
+    statusElement.textContent = 'Processing task...';
+    chatInput.disabled = true;
+    sendButton.disabled = true;
+    
+    // Send the task to the server
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        message: taskDescription,
+        history: chatHistory 
+      })
+    });
+    
+    // Handle the response
+    const result = await response.json();
+    
+    // Update UI based on response type
+    if (result.type === 'script') {
+      // Display the generated script
+      codeEditor.setValue(result.script);
+      
+      // Create a button for this script
+      addScriptButton(result.id, result.title || 'Generated Script');
+      
+      // Show success message in chat
+      addChatMessage('assistant', 
+        `I've created an automation script for your task. You can run it by clicking "Run Agent" or edit it first.`);
+    } else if (result.type === 'chat') {
+      // Display regular chat response
+      addChatMessage('assistant', result.message);
+    } else if (result.type === 'error') {
+      // Display error message
+      addChatMessage('system', `Error: ${result.message}`);
+    }
+    
+    // Reset UI state
+    statusElement.textContent = '';
+    chatInput.disabled = false;
+    sendButton.disabled = false;
+    chatInput.focus();
+    
+    return result;
+  } catch (error) {
+    console.error('Error running automation task:', error);
+    statusElement.textContent = '';
+    chatInput.disabled = false;
+    sendButton.disabled = false;
+    addChatMessage('system', `Error: ${error.message}`);
+  }
+}
+
+// Socket.io event handlers for real-time communication
+const socket = io();
+
+// Handle step execution results
+socket.on('step-result', (data) => {
+  if (data.success) {
+    // Update step status in UI
+    markStepComplete(data.stepIndex);
+    
+    // Add result to output log
+    if (data.output) {
+      appendToOutput(data.output);
+    }
+    
+    // If screenshot was taken, display it
+    if (data.screenshot) {
+      updateScreenshotDisplay(data.screenshot);
+    }
+  } else {
+    // Handle step execution failure
+    markStepFailed(data.stepIndex);
+    appendToOutput(`ERROR: ${data.error}`);
+  }
+});
+
+// Handle human handoff mode
+socket.on('human-handoff', (data) => {
+  if (data.active) {
+    // Show human handoff UI
+    humanHandoffContainer.classList.remove('d-none');
+    humanHandoffMessage.textContent = data.message;
+    
+    // Display screenshot if available
+    if (data.screenshot) {
+      humanHandoffScreenshot.src = data.screenshot;
+      humanHandoffScreenshot.classList.remove('d-none');
+    }
+    
+    // Scroll to make handoff UI visible
+    humanHandoffContainer.scrollIntoView({ behavior: 'smooth' });
+  } else {
+    // Hide human handoff UI
+    humanHandoffContainer.classList.add('d-none');
+  }
+});
+
+// Continue execution after human action
+continueButton.addEventListener('click', () => {
+  socket.emit('continue-after-handoff');
+  humanHandoffContainer.classList.add('d-none');
+});
+```
+
+## API Documentation
+
+The system exposes several RESTful API endpoints for integration with external systems:
+
+### Chat API
+
+**Endpoint:** `POST /api/chat`
+
+Request body:
+```json
+{
+  "message": "Go to example.com and extract all product links",
+  "history": [
+    {"role": "user", "content": "I need to automate some web tasks"},
+    {"role": "assistant", "content": "I can help with that. What would you like to automate?"}
+  ]
+}
+```
+
+Response:
+```json
+{
+  "type": "script",
+  "id": "script_a1b2c3d4",
+  "title": "Extract Product Links from Example.com",
+  "script": "// Generated Playwright script\nconst { test, expect } = require('@playwright/test');\n\ntest('Extract product links', async ({ page }) => {\n  // Script code here\n});"
+}
+```
+
+### Computer Use Tasks API
+
+**Endpoint:** `POST /api/computer-use/start`
+
+Request body:
+```json
+{
+  "taskDescription": "Search for the latest news about AI",
+  "userId": "user123",
+  "options": {
+    "maxDuration": 60000,
+    "screenshotFrequency": "high"
+  }
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "taskId": "task_9876xyz",
+  "sessionId": "session_5678abc",
+  "message": "Computer Use task started with ID: task_9876xyz"
+}
+```
+
+**Endpoint:** `GET /api/computer-use/task/:taskId`
+
+Response:
+```json
+{
+  "taskId": "task_9876xyz",
+  "status": "running",
+  "description": "Search for the latest news about AI",
+  "progress": {
+    "actionsExecuted": 3,
+    "screenshotsTaken": 2,
+    "durationMs": 12500,
+    "isComplete": false
+  }
+}
+```
+
+**Endpoint:** `POST /api/computer-use/pause/:taskId`
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Task task_9876xyz paused"
+}
+```
+
+**Endpoint:** `POST /api/computer-use/resume/:taskId`
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Task task_9876xyz resumed"
+}
+```
+
+### Script Management API
+
+**Endpoint:** `GET /api/scripts`
+
+Response:
+```json
+{
+  "scripts": [
+    {
+      "id": "script_a1b2c3d4",
+      "title": "Extract Product Links from Example.com",
+      "description": "Navigates to example.com and extracts all product links",
+      "metadata": {
+        "createdAt": "2023-05-15T14:30:22Z",
+        "version": 1
+      }
+    }
+  ]
+}
+```
+
+**Endpoint:** `GET /api/scripts/:scriptId`
+
+Response:
+```json
+{
+  "id": "script_a1b2c3d4",
+  "title": "Extract Product Links from Example.com",
+  "description": "Navigates to example.com and extracts all product links",
+  "script": "// Script content here",
+  "metadata": {
+    "createdAt": "2023-05-15T14:30:22Z",
+    "version": 1,
+    "lastRun": "2023-05-16T09:45:11Z",
+    "runCount": 3
+  }
+}
+```
+
+## Websocket Events
+
+The system uses Socket.io for real-time communication between the server and client:
+
+### Server to Client Events
+
+| Event | Description | Payload Example |
+|-------|-------------|----------------|
+| `step-result` | Result of a step execution | `{success: true, stepIndex: 2, output: "Clicked button successfully"}` |
+| `human-handoff` | Request for human intervention | `{active: true, message: "Please complete the CAPTCHA", screenshot: "data:image/png;base64,..."}` |
+| `execution-progress` | Overall execution progress | `{completed: 3, total: 5, currentStep: "Filling login form"}` |
+| `browser-error` | Error in browser execution | `{message: "Timeout waiting for selector", selector: "#login-button"}` |
+| `script-generation` | Script generation progress | `{status: "completed", script: "// Generated script..."}` |
+
+### Client to Server Events
+
+| Event | Description | Payload Example |
+|-------|-------------|----------------|
+| `run-step` | Request to run a specific step | `{scriptId: "script_123", stepIndex: 2}` |
+| `run-script` | Request to run entire script | `{scriptId: "script_123", options: {headless: false}}` |
+| `continue-after-handoff` | Signal to continue after human action | `{}` |
+| `cancel-execution` | Request to cancel execution | `{scriptId: "script_123"}` |
+| `generate-script` | Request to generate a script | `{task: "Go to example.com and extract all links"}` |
+
+Example server-side Socket.io implementation:
+```javascript
+// Set up Socket.io connection
+io.on('connection', (socket) => {
+  console.log('Client connected');
+  
+  // Store the socket connection for later use
+  const socketId = socket.id;
+  activeConnections[socketId] = socket;
+  
+  // Handle client disconnection
+  socket.on('disconnect', () => {
+    console.log('Client disconnected');
+    delete activeConnections[socketId];
+  });
+  
+  // Event: Run a step in the browser
+  socket.on('run-step', async (data) => {
+    try {
+      // Validate input
+      if (!data || !data.scriptId || data.stepIndex === undefined) {
+        socket.emit('error', { message: 'Invalid step execution request' });
+        return;
+      }
+      
+      console.log(`Running step ${data.stepIndex} for script ${data.scriptId}`);
+      
+      // Get the script from repository
+      const scriptRepo = getScriptRepository();
+      const script = await scriptRepo.getScript(data.scriptId);
+      
+      if (!script || !script.steps || !script.steps[data.stepIndex]) {
+        socket.emit('error', { message: 'Script or step not found' });
+        return;
+      }
+      
+      // Execute the step
+      const step = script.steps[data.stepIndex];
+      const result = await executeStepInBrowser(step);
+      
+      // Send the result back to the client
+      socket.emit('step-result', {
+        success: true,
+        stepIndex: data.stepIndex,
+        output: result.output,
+        screenshot: result.screenshot
+      });
+      
+      // Update script execution metadata
+      script.metadata.lastRun = new Date().toISOString();
+      script.metadata.runCount = (script.metadata.runCount || 0) + 1;
+      await scriptRepo.saveScript(script, data.scriptId);
+      
+    } catch (error) {
+      console.error('Error executing step:', error);
+      socket.emit('step-result', {
+        success: false,
+        stepIndex: data.stepIndex,
+        error: error.message
+      });
+    }
+  });
+  
+  // Event: Continue after human handoff
+  socket.on('continue-after-handoff', () => {
+    console.log('Continuing after human handoff');
+    if (humanHandoffResolve) {
+      humanHandoffResolve(true);
+      humanHandoffResolve = null;
+      inHumanHandoffMode = false;
+    }
+  });
+  
+  // Event: Cancel execution
+  socket.on('cancel-execution', (data) => {
+    console.log(`Cancelling execution for script ${data.scriptId}`);
+    
+    // Implement cancellation logic here
+    // ...
+    
+    socket.emit('execution-cancelled', {
+      scriptId: data.scriptId,
+      message: 'Execution cancelled successfully'
+    });
+  });
+});
+```
+
+## Key Features
+
+### 1. Natural Language Automation
+
+Users can simply describe what they want to accomplish, and the system will:
+- Analyze the natural language task description
+- Generate appropriate Playwright code
+- Execute the code in an embedded browser
+- Provide step-by-step feedback on the execution process
+
+Example user interaction:
+```
+User: "Go to example.com, click on the login link, enter 'user@example.com' in the email field, enter 'password' in the password field, and click the login button."
+
+System: [Generates and executes a Playwright script that performs these actions]
+```
+
+### 2. Specialized Website Handling
+
+The system includes specialized handling for complex websites:
+- LinkedIn automation with human handoff for login
+- Finance websites with enhanced selectors and waiting strategies
+- E-commerce sites with product selection logic
+- Authentication flows with secure credential handling
+
+Example LinkedIn handling code:
+```javascript
+// Example of LinkedIn-specific handling in script generation
+if (isLinkedInTask) {
+  console.log('LinkedIn task detected, ensuring specialized handling with human handoff mode');
+  isLinkedInTask = true;
+  analysis.isAutomationTask = true;
+  // Ensure we mark this as a task that requires automation
+  if (!analysis.taskInfo) {
+    analysis.taskInfo = {
+      originalMessage: task,
+      targetSite: 'linkedin.com',
+      actionType: 'web_automation',
+      difficulty: 'moderate'
+    };
+  }
+}
+```
+
+### 3. Robust Script Generation
+
+The system generates exceptionally robust Playwright scripts with:
+- Comprehensive error handling for each step
+- Intelligent retries and recovery strategies
+- Detailed logging of actions and results
+- Adaptive selectors that work across website changes
+
+Example robust click function generated for scripts:
+```javascript
+async function robustClick(page, selector, options = {}) {
+  const { timeout = 5000, retries = 3, debug = true } = options;
+  
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      if (debug) console.log("Attempting to click " + selector + " (attempt " + attempt + "/" + retries + ")");
+      
+      // First check if element exists at all
+      const elementExists = await page.$(selector) !== null;
+      if (!elementExists) {
+        if (debug) console.log("Element " + selector + " does not exist in the DOM");
+        if (attempt < retries) {
+          await page.waitForTimeout(500);
+          continue;
+        }
+        throw new Error("Element " + selector + " does not exist in the DOM after " + retries + " attempts");
+      }
+      
+      // Check if element is visible
+      const isVisible = await page.isVisible(selector, { timeout: 1000 }).catch(() => false);
+      if (!isVisible) {
+        if (debug) console.log("Element " + selector + " exists but is not visible");
+        if (attempt < retries) {
+          await page.waitForTimeout(500);
+          continue;
+        }
+        throw new Error("Element " + selector + " exists but is not visible after " + retries + " attempts");
+      }
+      
+      // Try to scroll element into view
+      await page.evaluate((sel) => {
+        const element = document.querySelector(sel);
+        if (element) element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, selector);
+      
+      await page.waitForTimeout(500); // Wait for scroll to complete
+      
+      // Check if element is clickable (not covered/obscured)
+      // ... [additional checks]
+      
+      // Finally attempt the click
+      await page.click(selector, { timeout });
+      if (debug) console.log("Successfully clicked " + selector);
+      return true;
+    } catch (error) {
+      if (debug) console.log("Error clicking " + selector + ": " + error.message);
+      if (attempt < retries) {
+        await page.waitForTimeout(500);
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+```
+
+### 4. Web Search Integration
+
+The system can enhance automation with real-time web search:
+- Searches for relevant information needed for tasks
+- Extracts data from search results for use in scripts
+- Uses current information to inform automation decisions
+- Handles authentication and specialized queries
+
+Example web search code:
+```javascript
+async function performWebSearch(query, options = {}) {
+  try {
+    console.log(`Performing web search for: "${query}"`);
+    
+    // Build the API request parameters for search
+    const messages = [
+      {
+        role: 'system',
+        content: 'You are a helpful web search assistant.'
+      },
+      {
+        role: 'user',
+        content: `Please search the web for: "${query}"\n\nProvide only factual information from reliable sources.`
+      }
+    ];
+    
+    // Call OpenAI with web search capability
+    const response = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo', // Use appropriate model
+      messages,
+      temperature: 0.3,
+      tools: [{ type: 'web_search' }],
+      tool_choice: 'auto'
+    });
+    
+    // Process and return the search results
+    return extractSearchResults(response);
+  } catch (error) {
+    console.error('Error performing web search:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+```
+
+### 5. Step-by-Step Visual Execution
+
+The system provides detailed visual execution with:
+- Browser display showing each action as it happens
+- Step list with current progress highlighted
+- Detailed logs of execution status
+- Screenshots at key points in the workflow
+
+## Testing Approach
+
+The system includes several testing utilities to ensure functionality:
+
+### 1. Component Testing
+
+Test individual components using the following scripts:
+
+```bash
+# Test OpenAI integration
+npm run test-openai
+
+# Test Computer Use functionality
+npm run test-computer-use
+
+# Test task validation
+npm run test-task-validation
+
+# Test parser functionality
+node test-parser.js
+```
+
+Example test-openai.js:
+```javascript
+require('dotenv').config();
+const { getOpenAIClient, generateChatResponse } = require('./openai-client');
+
+async function testOpenAI() {
+  console.log('Testing OpenAI connection and chat functionality...');
+  
+  try {
+    // Test basic chat functionality
+    console.log('\nTesting chat response:');
+    const response = await generateChatResponse(
+      'What can you do to help me with web automation?'
+    );
+    
+    console.log('Response type:', response.type);
+    console.log('Response message:', response.message?.substring(0, 100) + '...');
+    
+    // Test script generation
+    console.log('\nTesting script generation:');
+    const scriptResponse = await generateChatResponse(
+      'Create an agent that goes to example.com and clicks on the first link'
+    );
+    
+    console.log('Script response type:', scriptResponse.type);
+    
+    if (scriptResponse.type === 'script') {
+      console.log('Script generated successfully!');
+      console.log('Script title:', scriptResponse.title);
+      console.log('Script preview:', scriptResponse.script.substring(0, 100) + '...');
+    } else {
+      console.log('Failed to generate script:', scriptResponse.message);
+    }
+    
+    console.log('\nTests completed successfully!');
+  } catch (error) {
+    console.error('Error during OpenAI tests:', error);
+  }
+}
+
+testOpenAI();
+```
+
+### 2. End-to-End Testing
+
+Test the complete system with specific tasks:
+
+```bash
+# Start the server
+npm start
+
+# In another terminal, run a full automation test
+node test-click.js
+
+# Test a complex task with LinkedIn
+node test-linkedin.js
+```
+
+### 3. Manual Testing Checklist
+
+1. Chat functionality
+   - Basic questions and answers work
+   - Task detection correctly identifies automation requests
+   - Script generation for simple tasks works
+
+2. Browser automation
+   - Browser initializes correctly
+   - Steps execute as expected
+   - Screenshots are captured
+   - Error handling works properly
+
+3. Human handoff mode
+   - System correctly identifies when human intervention is needed
+   - UI shows proper instructions
+   - Execution continues after human action
+
+## Implementation Notes
+
+### Browser Configuration
+
+The project uses a specific browser configuration that must be maintained:
+- Headless browser mode with specific arguments for website compatibility
+- Disabled security features to allow cross-origin interactions
+- Custom user agent to avoid detection as an automated browser
+- Special handling for CORS and network requests
+
+### Prompt Engineering
+
+Specialized prompt engineering is used to generate high-quality scripts:
+- System prompts that define the AI's role and output format
+- Task-specific prompts for different types of automation
+- Examples of best practices embedded in prompts
+- Guidelines for robust error handling and logging
+
+### Error Recovery
+
+The system implements sophisticated error recovery:
+- Automatic retries for common failure points
+- Fallback strategies when primary approaches fail
+- Human intervention requests for complex issues
+- Detailed error reporting for debugging
+
+## Rebuilding the Platform
+
+To rebuild the AutonoM3 Agent Builder from scratch, follow these steps:
+
+1. **Set up the development environment**:
+   - Install Node.js 14+ and npm 6+
+   - Clone the repository or create a new project folder
+   - Initialize with `npm init`
+
+2. **Install core dependencies**:
+   ```bash
+   npm install express socket.io playwright @playwright/test openai dotenv body-parser cors http-proxy-middleware @babel/parser @babel/traverse uuid
+   ```
+
+3. **Set up the server**:
+   - Create `server.js` with Express and Socket.io configuration
+   - Implement browser initialization with Playwright
+   - Set up API endpoints for chat and automation
+
+4. **Implement the agent generator**:
+   - Create prompt templates for different task types
+   - Implement task detection logic
+   - Set up script generation with OpenAI integration
+
+5. **Build the frontend**:
+   - Create the HTML interface with embedded browser
+   - Implement JavaScript for real-time updates
+   - Style with CSS/Bootstrap for a modern interface
+
+6. **Configure OpenAI integration**:
+   - Set up API key management with dotenv
+   - Implement chat functions
+   - Create script generation pipeline
+
+7. **Deploy and test**:
+   - Use the launcher script to start the server
+   - Test with various automation tasks
+   - Refine prompts and error handling based on results
+
+## Deployment Guide
+
+### Development Deployment
+
+For local development:
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd autonomo-agent-builder
+
+# Install dependencies
+npm install
+
+# Set up environment variables
+cp .env.example .env
+# Edit .env with your OpenAI API key and other settings
+
+# Start the development server with hot reloading
+npm run dev
+```
+
+### Production Deployment
+
+For production deployment using PM2:
+
+```bash
+# Install PM2 globally
+npm install -g pm2
+
+# Start the application with PM2
+pm2 start server.js --name "autonomo-agent-builder" \
+  --env production \
+  --log ./logs/app.log \
+  --time
+
+# Setup PM2 to start on system boot
+pm2 startup
+pm2 save
+
+# Monitor the application
+pm2 monit
+```
+
+### Docker Deployment
+
+For containerized deployment:
+
+```bash
+# Build the Docker image
+docker build -t autonomo-agent-builder .
+
+# Run the container
+docker run -d -p 3000:3000 \
+  --name agent-builder \
+  --restart unless-stopped \
+  -e OPENAI_API_KEY=your_key_here \
+  -e PORT=3000 \
+  autonomo-agent-builder
+```
+
+Example Dockerfile:
+```dockerfile
+FROM node:16-slim
+
+# Install dependencies for Playwright
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg \
+    libglib2.0-0 \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libdbus-1-3 \
+    libxcb1 \
+    libxkbcommon0 \
+    libx11-6 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
+    fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy package files first for better caching
+COPY package*.json ./
+RUN npm install
+
+# Install Playwright browsers
+RUN npx playwright install chromium
+
+# Copy the rest of the application
+COPY . .
+
+# Expose the port
+EXPOSE 3000
+
+# Start the application
+CMD ["node", "server.js"]
+```
+
+## Conclusion
+
+The AutonoM3 Agent Builder represents a significant advancement in making web automation accessible to non-technical users while providing powerful tools for developers. By combining natural language processing with visual automation execution, it bridges the gap between human intent and technical implementation, enabling a wide range of automation use cases.
+
+The architecture allows for extensive customization and extension, making it suitable for both personal use and enterprise integration. Future development could focus on enhancing the AI capabilities, adding more specialized website handlers, and implementing more sophisticated learning from human interventions. 

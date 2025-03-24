@@ -10,5 +10,5 @@ export enum BrowserActions {
     FORWARD = "forward",
     REFRESH = "refresh",
     RELOAD = "reload",
-    
+    FILL_LOGIN = "fillLogin",
 }
